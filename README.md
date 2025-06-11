@@ -12,3 +12,8 @@ __Figure 2.__ Time series plot of seasonally adjusted NYC births data
 
 ![image](https://github.com/user-attachments/assets/ce06239c-f432-4c2e-a79c-243a69ac369e)
 __Figure 3.__ Volcanic dust level predictions, 1960 - 1970
+
+
+# Reference
+
+Coghlan, A. (2018, September 10). _Using R for Time Series Analysis._ [https://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html](https://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html)
