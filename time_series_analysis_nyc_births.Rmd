@@ -1,0 +1,225 @@
+---
+title: "Time Series Analysis NYC Births & Air Quality"
+author: "Elizabeth Van Der Schaaf"
+date: "2024-11-22"
+output: html_document
+---
+
+# Introduction
+
+The typical goal of time series analysis is to use data points gathered at regular intervals to predict future values. Methods such as decomposition can be used to determine the underlying structure of the data. Single moving average or exponential smoothing can help reduce noise. ARIMA is a popular model for time series analysis which incorporates autoregression, differencing, and moving average.
+
+This report will decompose time series data concerning births in NYC from 1946 - 1959. Then another dataset concerning the presence of volcanic ash in the northern hemisphere will be analyzed. An ARIMA model will be fit and used to forecast. These forecasted values will be evaluated against known values.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(forecast)
+library(dplyr)
+library(flextable)
+library(tseries)
+```
+
+# Analysis
+
+## Task 1
+
+__Decompose the seasonal time series data and subtract that effect from the NYC births data set__
+
+
+First load the data and create a time series object.
+```{r}
+# Read in data
+births <- scan("http://robjhyndman.com/tsdldata/data/nybirths.dat")
+str(births)
+```
+```{r}
+# Create time series object
+birthstimeseries <- ts(births, frequency=12, start=c(1946,1))
+print(birthstimeseries)
+```
+```{r fig.cap='__Figure 1.__ Time series plot of NYC births', fig.align='center'}
+# Plot the data
+plot.ts(birthstimeseries, main='Births in NYC from 1946 through 1959', xlab='Year', ylab='Births')
+```
+The data appears to have a trend as well as seasonality. The variation looks about even, indicating an additive model would be appropriate.
+
+Decompose the data into seasonal, trend, and random parts.
+```{r fig.cap='__Figure 2.__ Decomposition of NYC births time series data', fig.align='center'}
+births_components <- decompose(birthstimeseries)
+plot(births_components, xlab='Year')
+```
+Next, subtract only the seasonal component from the original data.
+```{r fig.cap='__Figure 3.__ Time series plot of seasonally adjusted NYC births data', fig.align='center'}
+seasonally_adj_births <- birthstimeseries - births_components$seasonal
+plot(seasonally_adj_births, main='Seasonally Adjusted Births from 1946 - 1959', xlab='Year', ylab='Births')
+```
+Removing the seasonality allows the overall trend to be more clearly visible. There appears to be a slight decline in the late 1940s and an increasing trend since that time, reaching a plateau around 1957.
+
+## Task 2
+__Address correlations between successive time series values in the atmospheric volcano dust data set. Use ARIMA models for this irregular component of a time series.__
+
+
+```{r fig.cap='__Figure 4.__ Northern hemisphere volcanic dust veil time series data', fig.align='center'}
+# Load data
+volcanodust <- scan("http://robjhyndman.com/tsdldata/annual/dvi.dat", skip=1)
+# Create time series object
+START = 1500
+volcanodustseries <- ts(volcanodust,start=c(START))
+plot.ts(volcanodustseries, main='Volcanic Dust Veil in Northern Hemisphere', xlab='Year', ylab='Volcanic dust level')
+```
+This data does not appear to have a trend or seasonality and variance is roughly constant. We can run an augmented Dickey-Fuller test to be sure.
+```{r}
+adf <- adf.test(volcanodust)
+print(adf)
+```
+The test confirms that the data is stationary. It is therefore appropriate to fit an ARIMA model directly, without differencing.
+
+The next step is plotting the Auto Correlation Function to determine the most important lags (20 will be our maximum lag).
+```{r fig.cap='__Figure 5.__ Auto correlation function plot for volcanic dust data', fig.align='center'}
+acf(volcanodustseries, lag.max=20)
+```
+```{r}
+# Get values of autocorrelations
+print(acf(volcanodustseries, lag.max=20, plot=FALSE))
+```
+The values tend towards zero after lag 3, indicating q = 3 might be a good choice for an ARIMA model.
+```{r}
+arima_1 <- arima(volcanodust, order = c(0, 0, 3))
+summary(arima_1)
+```
+
+Next, examine the partial autocorrelation function to determine an appropriate value for p.
+```{r fig.cap='__Figure 6.__ Partial auto correlation function plot for volcanic dust data', fig.align='center'}
+pacf(volcanodustseries, lag.max=20)
+```
+```{r}
+# Get values of partial autocorrelations
+print(pacf(volcanodustseries, lag.max=20, plot=FALSE))
+```
+The partial autocorrelation values tend towards zero after lag 2, indicating p = 2 might be a good choice.
+```{r}
+arima_2 <- arima(volcanodust, order = c(2, 0, 0))
+summary(arima_2)
+```
+
+
+We can use _auto.arima()_ to help determine an appropriate model.
+```{r}
+auto_arima <- auto.arima(volcanodust)
+summary(auto_arima)
+```
+The _auto.arima()_ function indicates a model with p = 1 and q = 2 is optimal. Let's compare the AIC scores.
+```{r}
+aic_table <- data.frame(
+  Model = c("ARIMA(0,0,3)", "ARIMA(2,0,0)", "ARIMA(1,0,2)"),
+  AIC = c(arima_1$aic, arima_2$aic, auto_arima$aic)
+)
+aic_table |> 
+  arrange(AIC) |> 
+  flextable() |> 
+  set_table_properties(width = .3, layout = "autofit")
+```
+__Table 1.__ AIC values for ARIMA models using volcano dust data.
+
+Based on the AIC values, the ARIMA(2,0,0) model is the best. It is also the model with the fewest parameters.
+
+We can proceed to evaluate this model by making predictions against the supplied dataset.
+
+Split data into train and test sets, keeping the last 10 data points for testing.
+```{r}
+# Total number of observations
+num <- length(volcanodustseries)
+# Split into train and test
+train <- volcanodustseries[1:(num - 10)]
+test <- volcanodustseries[(num - 9):num]
+print(paste("Number of observations in train set:", {length(train)}))
+print(paste("Number of observations in test set:", {length(test)}))
+```
+Now to fit the model.
+```{r}
+# Create time series object
+train_ts <- ts(train,start=c(START))
+test_ts <- ts(test, start=c(START+length(train)))
+# Fit model
+arima200 <- arima(train, order=c(2,0,0))
+summary(arima200)
+```
+This model can be expressed as:
+
+$$
+y_t = 57.9077 + 0.7539 y_{t-1} - 0.1259 y_{t-2} + \epsilon_t
+$$
+This is an AR model of order 2 (2 lagged values are used as predictors).
+```{r}
+predictions <- forecast(arima200, h=10)
+print(predictions)
+```
+Visualize the predictions.
+```{r}
+# Extract mean predictions
+pred_mean <- predictions$mean
+# Create time series object
+pred_ts <- ts(pred_mean, start=c(START+length(train)))
+```
+
+```{r fig.cap='__Figure 7.__ Volcanic dust levels with forecast levels for 1960 - 1970, including a 95% confidence interval, using ARIMA(2,0,0) model.', fig.align='center'}
+# Plot historic data
+plot(train_ts, type='l', col='black', xlab='Year', ylab='Dust Levels', 
+     main='Volcanic Dust Level Predictions for 1960 - 1970')
+
+# Add reference data
+lines(test_ts, col='orange')
+
+# Add predictions
+lines(pred_ts, col='blue')
+
+# Add confidence interval
+polygon(c(time(pred_ts), rev(time(pred_ts))), 
+        c(predictions$lower[,2], rev(predictions$upper[,2])), 
+        col=rgb(0.4, 0.6, 0.8, alpha=0.3), border=NA)
+
+# Legend
+legend("topright", legend=c("Historic", "Actual", "Predicted", "95% confidence"), 
+       col=c("black", "orange", "blue", "lightblue"), lty=1, lwd=c(3, 3, 3, NA), 
+       fill=c(NA, NA, NA, rgb(0.4, 0.6, 0.8, alpha=0.3)), cex=0.8)
+
+```
+```{r fig.cap='__Figure 8.__ A closer look at predictions of ARIMA(2,0,0)', fig.align='center'}
+# Truncate historic data
+train_ts_subset <- window(train_ts, start=c(1750))
+
+# New plot
+plot(train_ts_subset, type='l', col='black', xlab='Year', ylab='Dust Levels', 
+     main='Volcanic Dust Level Predictions for 1960 - 1970')
+
+lines(test_ts, col='orange')
+lines(pred_ts, col='blue')
+
+polygon(c(time(pred_ts), rev(time(pred_ts))), 
+        c(predictions$lower[,2], rev(predictions$upper[,2])), 
+        col=rgb(0.4, 0.6, 0.8, alpha=0.3), border=NA)
+
+legend("topright", legend=c("Historic", "Actual", "Predicted", "95% confidence"), 
+       col=c("black", "orange", "blue", "lightblue"), lty=1, lwd=c(3, 3, 3, NA), 
+       fill=c(NA, NA, NA, rgb(0.4, 0.6, 0.8, alpha=0.3)), cex=0.8)
+```
+Determine the Mean Absolute Deviation of the model.
+```{r}
+mad <- mean(abs(test_ts - pred_ts))
+cat("MAD score for ARIMA(2,0,0):", mad)
+```
+
+```{r}
+error_margin <- (mad/max(volcanodust)*100)
+cat("Margin of error for this model is", round(error_margin, 3), "%")
+```
+
+# Conclusion
+The optimal model for forecasting volcanic ash levels in the northern hemisphere, as determined by AIC scores, is the ARIMA(2,0,0) model which uses 2 lag values as predictors. Comparing forecast values to actual values for the most recent 10 years of data gives a MAD of 49.28. This corresponds to a 7.09% margin of error. As seen in Figures 7 and 8, the actual values do fall within the 95% confidence interval for the predictions.
+
+I'm not very familiar with the domain of volcanic ash levels, but a 7.09% margin of error seems reasonable. The model did forecast slightly elevated levels of volcanic ash after a few decades of near zero levels, which does correspond with the actual data for this period.
+
+
+# References
+
+Coghlan, A. (2018, September 10). _Using R for Time Series Analysis._ [https://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html](https://a-little-book-of-r-for-time-series.readthedocs.io/en/latest/src/timeseries.html)
